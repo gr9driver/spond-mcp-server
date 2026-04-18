@@ -1,0 +1,17 @@
+[project]
+name = "spond-mcp-server"
+version = "0.1.0"
+description = "MCP server exposing the Spond API as tools for Windsurf/Cascade"
+requires-python = ">=3.11"
+dependencies = [
+    "spond>=1.0.0",
+    "mcp[cli]>=1.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.scripts]
+spond-mcp-server = "spond_mcp_server.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
