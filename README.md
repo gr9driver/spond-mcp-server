@@ -127,6 +127,25 @@ All API timestamps are **UTC/Zulu**. UK summer time (BST) is UTC+1.
 
 Always show local times in the `description` field — that's what users read.
 
+## Windsurf Skill
+
+A Windsurf/Cascade skill is included in [`skill/SKILL.md`](skill/SKILL.md). It auto-triggers when you ask Cascade anything Spond-related and provides:
+
+- Tool quick reference
+- Common workflow patterns
+- Common mistakes (matchInfo, location, timing, send approval)
+- Links to [`skill/references/api-patterns.md`](skill/references/api-patterns.md) for deep API docs
+
+### Installation
+
+Copy to your global skills directory:
+
+```bash
+cp -r skill/ ~/.codeium/windsurf/skills/spond-mcp/
+```
+
+Then add your personal group IDs and venue registry (not included — see skill for instructions).
+
 ## Diagnostic tool
 
 `check_event.py` fetches a single event by ID and prints its heading, type, and location:
