@@ -472,6 +472,12 @@ async def spond_send_message(
     result = await s.send_message(
         text=text, chat_id=chat_id, user=user, group_uid=group_uid
     )
+
+    # Defensive: handle upstream library bug where send_message returns a coroutine
+    # when using chat_id (missing 'await' in spond library v1.x, line ~220)
+    if asyncio.iscoroutine(result):
+        result = await result
+
     return _serialize(result)
 
 
