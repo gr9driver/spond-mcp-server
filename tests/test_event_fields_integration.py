@@ -19,12 +19,16 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 SPOND_USERNAME = os.getenv("SPOND_USERNAME", "")
 SPOND_PASSWORD = os.getenv("SPOND_PASSWORD", "")
 
-# Existing U11 test event to fix
-U11_EVENT_ID = "D40EB282EA06489C930A32B68A4F0A32"
+# Set these in .env or environment to run integration tests against your own Spond account
+TEST_EVENT_ID   = os.getenv("TEST_EVENT_ID", "")   # ID of an existing event to update
+TEST_GROUP_ID   = os.getenv("TEST_GROUP_ID", "")   # Parent group ID
+TEST_SUBGROUP_ID = os.getenv("TEST_SUBGROUP_ID", "")  # Subgroup ID
+TEST_HOME_VENUE  = os.getenv("TEST_HOME_VENUE", "My Cricket Club")  # Home venue feature name
+TEST_HOME_ADDRESS = os.getenv("TEST_HOME_ADDRESS", "1 Cricket Lane, MyTown, AB1 2CD")  # Full address
 
-# Match start: 10 May 2026 10:00 local (09:00 Zulu)
-MATCH_START = "2026-05-10T09:00:00"
-MATCH_END = "2026-05-10T11:00:00"
+# Match start: override via env or use this default
+MATCH_START = os.getenv("TEST_MATCH_START", "2026-05-10T09:00:00")
+MATCH_END   = os.getenv("TEST_MATCH_END",   "2026-05-10T11:00:00")
 MEETUP_PRIOR = 30  # minutes
 
 
@@ -36,12 +40,12 @@ def _build_full_payload(my_id: str, heading: str, is_home: bool) -> dict:
     reminder_dt = rsvp_dt - timedelta(hours=48)
 
     match_type = "HOME" if is_home else "AWAY"
-    location_address = "Bourne Cricket Club, Abbey Lawns, West Road, Bourne, PE10 9EP"
-    location_feature = "Bourne Cricket Club"
+    location_address = TEST_HOME_ADDRESS
+    location_feature = TEST_HOME_VENUE
 
     # Parse opponent from heading e.g. "U11 V Barnack"
     parts = heading.upper().split(" V ")
-    team_name = parts[0].strip().title() if len(parts) > 1 else "Bourne"
+    team_name = parts[0].strip().title() if len(parts) > 1 else "My Club"
     opponent_name = parts[1].strip().title() if len(parts) > 1 else "Opponent"
 
     return {
@@ -77,12 +81,12 @@ def _build_full_payload(my_id: str, heading: str, is_home: bool) -> dict:
         "matchInfo": {
             "type": match_type,
             "opponentName": opponent_name,
-            "teamName": f"Bourne {team_name}",
+            "teamName": team_name,
         },
         "recipients": {
             "group": {
-                "id": "5AA57187D9D64041932408426CFB794C",
-                "subGroups": [{"id": "53BB6012204143CE98BEAAA984D5C969"}],
+                "id": TEST_GROUP_ID,
+                "subGroups": [{"id": TEST_SUBGROUP_ID}],
             }
         },
     }
@@ -98,18 +102,24 @@ async def spond_client():
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_update_u11_event_fields(spond_client):
-    """Round-trip: POST update to U11 event, GET back, assert all fields persist."""
+async def test_update_event_fields(spond_client):
+    """Round-trip: POST update to a test event, GET back, assert all fields persist.
+
+    Requires TEST_EVENT_ID, TEST_GROUP_ID, TEST_SUBGROUP_ID in environment.
+    """
+    if not TEST_EVENT_ID:
+        pytest.skip("TEST_EVENT_ID not set — skipping integration test")
+
     s = spond_client
     my_id = (await s.get_profile()).get("id")
 
-    heading = "U11 V Barnack"
+    heading = os.getenv("TEST_MATCH_HEADING", "My Club U11 V Rival CC")
     payload = _build_full_payload(my_id=my_id, heading=heading, is_home=True)
 
     # POST update
     async with httpx.AsyncClient() as client:
         resp = await client.post(
-            f"{s.api_url}sponds/{U11_EVENT_ID}",
+            f"{s.api_url}sponds/{TEST_EVENT_ID}",
             json=payload,
             headers=s.auth_headers,
         )
@@ -119,7 +129,7 @@ async def test_update_u11_event_fields(spond_client):
     # Also GET to confirm persistence
     async with httpx.AsyncClient() as client:
         resp = await client.get(
-            f"{s.api_url}sponds/{U11_EVENT_ID}",
+            f"{s.api_url}sponds/{TEST_EVENT_ID}",
             headers=s.auth_headers,
         )
         event = resp.json()
@@ -134,15 +144,17 @@ async def test_update_u11_event_fields(spond_client):
     assert event.get("heading"), f"Heading is blank: {event.get('heading')}"
     assert event["matchEvent"] is True, f"matchEvent not True: {event.get('matchEvent')}"
 
+    expected_opponent = heading.split(" V ", 1)[-1].strip().title() if " V " in heading.upper() else "Rival Cc"
+
     match_info = event.get("matchInfo", {})
     assert match_info, "matchInfo missing from response"
     assert match_info.get("type") == "HOME", f"matchInfo.type: {match_info.get('type')}"
-    assert match_info.get("opponentName") == "Barnack", f"opponentName: {match_info.get('opponentName')}"
+    assert match_info.get("opponentName") == expected_opponent, f"opponentName: {match_info.get('opponentName')}"
 
     loc = event.get("location", {})
-    assert loc.get("address") == "Bourne Cricket Club, Abbey Lawns, West Road, Bourne, PE10 9EP", \
+    assert loc.get("address") == TEST_HOME_ADDRESS, \
         f"location.address: {loc.get('address')}"
-    assert loc.get("feature") == "Bourne Cricket Club", \
+    assert loc.get("feature") == TEST_HOME_VENUE, \
         f"location.feature (Place): {loc.get('feature')}"
 
     assert event.get("maxAccepted") == 11, f"maxAccepted: {event.get('maxAccepted')}"

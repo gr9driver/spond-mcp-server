@@ -81,14 +81,14 @@ class TestCreateEventViaApi:
                 heading="U11 V Lincoln",
                 start="2026-05-10T10:00:00",
                 end="2026-05-10T12:00:00",
-                description="Home match at Bourne Cricket Club",
-                location="Bourne Cricket Club, Abbey Lawns, West Road",
+                description="Home match at My Cricket Club",
+                location="My Cricket Club, 1 Cricket Lane, MyTown",
             )
 
             payload = mock_client.post.call_args[1]["json"]
-            assert payload["description"] == "Home match at Bourne Cricket Club"
-            assert payload["location"]["address"] == "Bourne Cricket Club, Abbey Lawns, West Road"
-            assert payload["location"]["feature"] == "Bourne Cricket Club"
+            assert payload["description"] == "Home match at My Cricket Club"
+            assert payload["location"]["address"] == "My Cricket Club, 1 Cricket Lane, MyTown"
+            assert payload["location"]["feature"] == "My Cricket Club"
             assert payload["matchInfo"]["type"] == "HOME"
 
     @pytest.mark.asyncio
@@ -216,7 +216,7 @@ class TestSpondCreateEventTool:
                 start="2026-05-10T10:00:00",
                 end="2026-05-10T12:00:00",
                 description="Important match",
-                location="Bourne CC",
+                location="My CC",
             )
 
             # Assert optional params passed
@@ -227,5 +227,5 @@ class TestSpondCreateEventTool:
                 start="2026-05-10T10:00:00",
                 end="2026-05-10T12:00:00",
                 description="Important match",
-                location="Bourne CC",
+                location="My CC",
             )
