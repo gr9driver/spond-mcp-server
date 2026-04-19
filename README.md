@@ -50,11 +50,11 @@ The `spond_create_event` tool creates new events via direct API call:
 ```python
 spond_create_event(
     group_id="YOUR_GROUP_ID",
-    heading="U11 Cricket Match vs Lincoln",
+    heading="Match vs Opponent Team",
     start="2026-05-10T10:00:00",
     end="2026-05-10T12:00:00",
-    description="Home match at Bourne Cricket Club",
-    location="Bourne Cricket Club, Main Road"
+    description="Home fixture at local venue",
+    location="Sports Venue Address"
 )
 ```
 
