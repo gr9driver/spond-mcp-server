@@ -34,6 +34,7 @@ Uses the unofficial [spond](https://github.com/Olen/Spond) Python library.
 | `spond_send_message` | Send a message |
 | `spond_get_posts` | Get group wall posts |
 | `spond_get_profile` | Get your profile |
+| `spond_create_event` | Create a new event in a group |
 | `spond_get_transactions` | Get Spond Club transactions |
 
 ## Credentials
@@ -41,3 +42,20 @@ Uses the unofficial [spond](https://github.com/Olen/Spond) Python library.
 - `SPOND_USERNAME` — Your Spond account email
 - `SPOND_PASSWORD` — Your Spond account password
 - `SPOND_CLUB_ID` — (Optional) Your Spond Club ID for transaction queries
+
+## Creating Events
+
+The `spond_create_event` tool creates new events via direct API call:
+
+```python
+spond_create_event(
+    group_id="YOUR_GROUP_ID",
+    heading="U11 Cricket Match vs Lincoln",
+    start="2026-05-10T10:00:00",
+    end="2026-05-10T12:00:00",
+    description="Home match at Bourne Cricket Club",
+    location="Bourne Cricket Club, Main Road"
+)
+```
+
+**Note:** The unofficial `spond` library doesn't expose `create_event`, so this tool POSTs directly to the Spond API using the same payload structure as `update_event`.

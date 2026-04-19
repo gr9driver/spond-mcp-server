@@ -9,6 +9,8 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
+import httpx
+
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 
@@ -71,6 +73,87 @@ def _serialize(obj: object) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Event creation helper (direct API call — not exposed by spond library)
+# ---------------------------------------------------------------------------
+
+
+_EVENT_TEMPLATE = {
+    "heading": None,
+    "description": None,
+    "spondType": "EVENT",
+    "startTimestamp": None,
+    "endTimestamp": None,
+    "commentsDisabled": False,
+    "maxAccepted": 0,
+    "rsvpDate": None,
+    "location": {
+        "id": None,
+        "feature": None,
+        "address": None,
+        "latitude": None,
+        "longitude": None,
+    },
+    "owners": [{"id": None}],
+    "visibility": "INVITEES",
+    "participantsHidden": False,
+    "autoReminderType": "DISABLED",
+    "autoAccept": False,
+    "payment": {},
+    "attachments": [],
+    "id": None,
+    "tasks": {
+        "openTasks": [],
+        "assignedTasks": [
+            {
+                "name": None,
+                "description": "",
+                "type": "ASSIGNED",
+                "id": None,
+                "adultsOnly": True,
+                "assignments": {"memberIds": [], "profiles": [], "remove": []},
+            }
+        ],
+    },
+}
+
+
+async def _create_event_via_api(
+    spond_client: Spond,
+    group_id: str,
+    heading: str,
+    start: str,
+    end: str,
+    description: str = "",
+    location: str = "",
+) -> dict:
+    """Create a new event via direct POST to Spond API.
+
+    The spond library doesn't expose create_event, so we POST directly.
+    """
+    # Build event payload from template
+    payload = _EVENT_TEMPLATE.copy()
+    payload["heading"] = heading
+    payload["description"] = description
+    payload["startTimestamp"] = start
+    payload["endTimestamp"] = end
+    if location:
+        payload["location"]["address"] = location
+
+    # Get auth headers from the client
+    auth_headers = spond_client.auth_headers
+    api_url = spond_client.api_url
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{api_url}sponds",
+            json=payload,
+            headers=auth_headers,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+# ---------------------------------------------------------------------------
 # Events
 # ---------------------------------------------------------------------------
 
@@ -128,6 +211,38 @@ async def spond_get_event(uid: str) -> str:
     s = await _get_client()
     event = await s.get_event(uid)
     return _serialize(event)
+
+
+@mcp.tool()
+async def spond_create_event(
+    group_id: str,
+    heading: str,
+    start: str,
+    end: str,
+    description: str = "",
+    location: str = "",
+) -> str:
+    """Create a new event in a Spond group.
+
+    Args:
+        group_id: The Spond group ID to create the event in.
+        heading: Event title.
+        start: ISO-8601 start datetime (e.g. '2026-05-10T10:00:00').
+        end: ISO-8601 end datetime (e.g. '2026-05-10T12:00:00').
+        description: Optional event description.
+        location: Optional location name.
+    """
+    s = await _get_client()
+    result = await _create_event_via_api(
+        spond_client=s,
+        group_id=group_id,
+        heading=heading,
+        start=start,
+        end=end,
+        description=description,
+        location=location,
+    )
+    return _serialize(result)
 
 
 @mcp.tool()
