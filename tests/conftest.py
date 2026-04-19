@@ -10,4 +10,5 @@ def mock_spond_client():
     client = MagicMock()
     client.auth_headers = {"Authorization": "Bearer test-token"}
     client.api_url = "https://api.spond.com/core/v1/"
+    client.login = AsyncMock(return_value=None)
     return client
