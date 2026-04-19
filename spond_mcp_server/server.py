@@ -30,6 +30,19 @@ SPOND_CLUB_ID = os.getenv("SPOND_CLUB_ID", "")
 mcp = FastMCP("spond")
 
 # ---------------------------------------------------------------------------
+# Subgroup mapping for My Cricket Club
+# ---------------------------------------------------------------------------
+
+# Subgroup IDs that need to be wrapped in parent group for API calls
+CRICKET_SUBGROUPS = {
+    # My Cricket Club subgroups (parent: 00000000000000000000000000000004)
+    "00000000000000000000000000000006": "00000000000000000000000000000004",  # U9
+    "00000000000000000000000000000003": "00000000000000000000000000000004",  # U11
+    "00000000000000000000000000000002": "00000000000000000000000000000004",  # U13
+    "00000000000000000000000000000001": "00000000000000000000000000000004",  # U15
+}
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -125,21 +138,92 @@ async def _create_event_via_api(
     end: str,
     description: str = "",
     location: str = "",
+    location_dict: dict | None = None,
 ) -> dict:
     """Create a new event via direct POST to Spond API.
 
     The spond library doesn't expose create_event, so we POST directly.
+    Includes matchInfo for proper Home/Away match type display.
+
+    location_dict overrides location string and should contain:
+        feature, address, latitude, longitude, postalCode, country,
+        administrativeAreaLevel1, administrativeAreaLevel2
     """
-    # Build event payload from template
+    from datetime import datetime, timedelta
+
+    # Ensure client is logged in
+    await spond_client.login()
+
+    # --- Detect Home/Away ---
+    # Prefer explicit location_dict; fall back to string heuristic
+    if location_dict:
+        loc_feature = location_dict.get("feature", "")
+        is_home = "bourne" in loc_feature.lower()
+    else:
+        is_home = bool(
+            location
+            and ("bourne" in location.lower() or "abbey lawns" in location.lower())
+        )
+        loc_feature = None
+
+    # --- Strip [HOME]/[AWAY] annotation from heading ---
+    clean_heading = heading.replace("[HOME]", "").replace("[AWAY]", "").strip()
+
+    # --- Parse team/opponent from heading (e.g. "U11 V Barnack") ---
+    parts = clean_heading.upper().split(" V ")
+    team_part = parts[0].strip().title() if len(parts) > 1 else clean_heading
+    opponent_name = parts[1].strip().title() if len(parts) > 1 else ""
+
+    # --- Timing ---
+    start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
+    meetup_dt = start_dt - timedelta(minutes=30)
+    rsvp_dt = start_dt - timedelta(hours=24)
+    reminder_dt = rsvp_dt - timedelta(hours=48)
+
+    # --- Build payload ---
     payload = _EVENT_TEMPLATE.copy()
-    payload["heading"] = heading
+    payload["location"] = dict(_EVENT_TEMPLATE["location"])  # deep copy nested dict
+    payload["heading"] = clean_heading
     payload["description"] = description
     payload["startTimestamp"] = start
     payload["endTimestamp"] = end
-    if location:
-        payload["location"]["address"] = location
+    payload["maxAccepted"] = 11
+    payload["rsvpDate"] = rsvp_dt.strftime("%Y-%m-%dT%H:%M:%S")
+    payload["autoReminderType"] = "REMIND_48H_BEFORE"
+    payload["autoReminderTime"] = reminder_dt.strftime("%Y-%m-%dT%H:%M:%S") + "Z"
+    payload["meetupTimestamp"] = meetup_dt.strftime("%Y-%m-%dT%H:%M:%S")
+    payload["meetupPrior"] = 30
 
-    # Get auth headers from the client
+    # --- Location ---
+    if location_dict:
+        # Full structured location — preferred path for accurate map pins
+        payload["location"] = {"id": None, **location_dict}
+    elif location:
+        # Fallback: string-only location
+        loc_feature = location.split(",")[0].strip()[:50] if not is_home else "My Cricket Club"
+        payload["location"]["address"] = location
+        payload["location"]["feature"] = loc_feature
+
+    # --- matchInfo: required for Home/Away match type display ---
+    payload["matchEvent"] = True
+    payload["matchInfo"] = {
+        "type": "HOME" if is_home else "AWAY",
+        "opponentName": opponent_name,
+        "teamName": f"MyClub {team_part}",
+    }
+
+    # --- Recipients ---
+    if group_id in CRICKET_SUBGROUPS:
+        parent_id = CRICKET_SUBGROUPS[group_id]
+        payload["recipients"] = {
+            "group": {
+                "id": parent_id,
+                "subGroups": [{"id": group_id}],
+            }
+        }
+    else:
+        payload["recipients"] = {"group": {"id": group_id}}
+
     auth_headers = spond_client.auth_headers
     api_url = spond_client.api_url
 
@@ -221,18 +305,37 @@ async def spond_create_event(
     end: str,
     description: str = "",
     location: str = "",
+    location_json: str = "",
 ) -> str:
     """Create a new event in a Spond group.
 
     Args:
         group_id: The Spond group ID to create the event in.
-        heading: Event title.
-        start: ISO-8601 start datetime (e.g. '2026-05-10T10:00:00').
-        end: ISO-8601 end datetime (e.g. '2026-05-10T12:00:00').
-        description: Optional event description.
-        location: Optional location name.
+        heading: Event title (e.g. 'MyClub U11 v Barnack' or 'Barnack v MyClub U11').
+        start: ISO-8601 start datetime in UTC/Zulu (e.g. '2026-05-10T09:00:00Z').
+            UK BST is UTC+1, so 10:00am local = 09:00:00Z.
+        end: ISO-8601 end datetime in UTC/Zulu.
+        description: Optional event description. Should state local (BST) times.
+        location: Simple location string fallback (used only if location_json not provided).
+        location_json: JSON string with full location data for accurate map pins.
+            Recommended fields: feature (venue display name shown as 'Place' in Spond),
+            address (short street address), latitude, longitude, postalCode, country,
+            administrativeAreaLevel1, administrativeAreaLevel2.
+
+            Best practice for coordinates:
+            1. Google Maps: search venue, right-click pin → copy lat/lng
+            2. Google Places API: resolves name to precise pin coordinates
+            3. what3words: clubs often publish their w3w address (e.g. Burghley Park: become.pills.online)
+            4. OSM/Nominatim fallback: postcode-level accuracy only
+
+            Example for home fixture:
+            location_json='{"feature": "My Cricket Club", "address": "1 Cricket Lane, MyClub",
+              "latitude": 52.1230000, "longitude": -0.4560000, "postalCode": "AB1 2CD",
+              "country": "GB", "administrativeAreaLevel1": "England",
+              "administrativeAreaLevel2": "Lincolnshire"}'
     """
     s = await _get_client()
+    location_dict = json.loads(location_json) if location_json else None
     result = await _create_event_via_api(
         spond_client=s,
         group_id=group_id,
@@ -241,6 +344,7 @@ async def spond_create_event(
         end=end,
         description=description,
         location=location,
+        location_dict=location_dict,
     )
     return _serialize(result)
 
