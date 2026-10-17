@@ -16,3 +16,13 @@ Object of type <class 'coroutine'> is not JSON serializable
 ### Full Changelog
 - `server.py`: Added coroutine detection/await (4 lines)
 - `pyproject.toml`: Version bumped to 1.0.1
+
+## 1.1.0
+
+- Create events send `type` (not `spondType`). Home/away comes from a `[HOME]`/`[AWAY]` tag or `SPOND_HOME_FEATURES`, not a hardcoded club name.
+- Generated RSVP, meetup, and reminder timestamps are UTC with a `Z`.
+- Create and delete share the Spond aiohttp session. Credentials are read when a tool runs, not at import.
+- `spond_patch_event` posts a full event payload for location and match fields.
+- `spond_get_rsvp_summary` returns accepted, declined, unanswered, and waiting-list names.
+- `spond_get_events` accepts `include_hidden`. Groups and events accept `summary=true`.
+- Tools declare read-only and destructive annotations. HTTP errors return JSON.

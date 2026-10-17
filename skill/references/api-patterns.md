@@ -61,9 +61,12 @@ Spond's "Home match"/"Away match" display requires `matchInfo`, not `spondType`.
 
 ### Auto-detection (spond_create_event)
 
-- **HOME** if `location.feature` contains your club name (case-insensitive substring match)
-- **AWAY** otherwise
-- Opponent parsed from heading after `" v "` (e.g. `"My Club U11 v Rival CC"`)
+- A `[HOME]` or `[AWAY]` tag in the heading wins and is removed from the stored title.
+- Otherwise **HOME** when the venue contains a substring from `SPOND_HOME_FEATURES` (comma-separated, case-insensitive).
+- With that variable unset, the match is **AWAY**.
+- Opponent parsed from heading after `" v "` (e.g. `"My Club U11 v Rival CC"`).
+- `SPOND_TEAM_NAME` prefixes `matchInfo.teamName` when set.
+- The event kind is the `type` field (`EVENT`, `AVAILABILITY`, `RECURRING`), not `spondType`.
 
 ## Timing (Zulu/UTC vs Local)
 
@@ -88,13 +91,11 @@ Spond API uses **UTC/Zulu** timestamps. UK summer time (BST) is UTC+1.
 
 **Result:** These fields get overwritten if you try to update them via `spond_update_event`.
 
-### Full-payload patch pattern
+### Full-payload patch
 
-To update location or matchInfo on an existing event:
+Use `spond_patch_event`. It fetches the event, overlays the JSON you pass (nested objects merge one level), and posts the full payload back. That preserves `matchInfo` when you only change `location`.
 
-1. **GET** the full event JSON: `GET {api_url}sponds/{event_id}`
-2. **Update** the relevant fields in the payload
-3. **POST** the full payload back: `POST {api_url}sponds/{event_id}`
+The same HTTP shape, if you are calling the API yourself:
 
 ```python
 # Example: patch location

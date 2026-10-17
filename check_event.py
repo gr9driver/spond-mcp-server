@@ -3,12 +3,15 @@
 Usage:
     python check_event.py <EVENT_ID>
 """
-import asyncio, os, sys, httpx
+import asyncio
+import sys
 from pathlib import Path
+
 from dotenv import load_dotenv
-from spond.spond import Spond
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
+
+from spond_mcp_server.server import _get_client, close_clients  # noqa: E402
 
 
 async def main():
@@ -17,16 +20,14 @@ async def main():
         sys.exit(1)
 
     event_id = sys.argv[1]
-    s = Spond(username=os.environ["SPOND_USERNAME"], password=os.environ["SPOND_PASSWORD"])
-    await s.login()
+    try:
+        s = await _get_client()
+        e = await s.get_event(event_id)
+    finally:
+        await close_clients()
 
-    async with httpx.AsyncClient() as client:
-        r = await client.get(f"{s.api_url}sponds/{event_id}", headers=s.auth_headers)
-        r.raise_for_status()
-        e = r.json()
-
-    loc = e.get("location", {})
-    mi = e.get("matchInfo", {})
+    loc = e.get("location") or {}
+    mi = e.get("matchInfo") or {}
     print("Heading:   ", e.get("heading"))
     print("Start:     ", e.get("startTimestamp"))
     print("Match type:", mi.get("type"))
