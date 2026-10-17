@@ -1,6 +1,6 @@
 # Spond MCP Server
 
-MCP server that exposes the [Spond](https://spond.com/) API as tools for Windsurf/Cascade.
+MCP server that exposes the [Spond](https://spond.com/) API as tools for Cursor and Windsurf.
 
 Uses the unofficial [spond](https://github.com/Olen/Spond) Python library.
 
@@ -16,18 +16,21 @@ Uses the unofficial [spond](https://github.com/Olen/Spond) Python library.
    pip install -e .
    ```
 
-3. The server is registered in your Windsurf MCP config and will start automatically when Cascade needs it.
+3. Register the server in your MCP client (Cursor or Windsurf). The host injects `SPOND_*` into the process environment. `python-dotenv` is used only by `check_event.py`.
 
 ## Available Tools
 
 | Tool | Description |
 |------|-------------|
-| `spond_get_events` | List events with optional filters |
+| `spond_get_events` | List events (`include_hidden`, `summary=true` for a compact row) |
 | `spond_get_event` | Get a single event by ID |
 | `spond_update_event` | Update description/heading only (see limitations below) |
-| `spond_change_response` | Accept/decline an event |
+| `spond_patch_event` | Full-payload patch, including location and matchInfo |
+| `spond_delete_event` | Delete an event |
+| `spond_change_response` | Accept/decline an event, with optional decline message |
 | `spond_get_event_attendance` | Export attendance as XLSX |
-| `spond_get_groups` | List all groups |
+| `spond_get_rsvp_summary` | Accepted, declined, unanswered, and waiting-list names |
+| `spond_get_groups` | List all groups (`summary=true` for id, name, member count) |
 | `spond_get_group` | Get a single group by ID |
 | `spond_get_person` | Find a member by name/email/ID |
 | `spond_get_messages` | List chat messages |
@@ -39,10 +42,13 @@ Uses the unofficial [spond](https://github.com/Olen/Spond) Python library.
 
 ## Credentials
 
-Store in `.env`:
+The MCP host injects these into the process. `check_event.py` is the only entry point that reads `.env` via python-dotenv.
+
 - `SPOND_USERNAME` — Your Spond account email
 - `SPOND_PASSWORD` — Your Spond account password
 - `SPOND_CLUB_ID` — (Optional) Your Spond Club ID for transaction queries
+- `SPOND_HOME_FEATURES` — (Optional) Comma-separated venue substrings treated as home
+- `SPOND_TEAM_NAME` — (Optional) Prefix for `matchInfo.teamName`
 
 ## Creating Events
 
@@ -68,7 +74,8 @@ spond_create_event(
 | Spond UI field | API field | Notes |
 |----------------|-----------|-------|
 | Title | `heading` | |
-| Type (Home/Away match) | `matchInfo.type` | `"HOME"` or `"AWAY"` — **not** `spondType` |
+| Event kind | `type` | `"EVENT"`, `"AVAILABILITY"`, or `"RECURRING"` — **not** `spondType` |
+| Type (Home/Away match) | `matchInfo.type` | `"HOME"` or `"AWAY"` |
 | Opponent | `matchInfo.opponentName` | Parsed from heading after `" v "` |
 | Team | `matchInfo.teamName` | Auto-set from heading |
 | Place | `location.feature` | Venue display name shown in Spond UI |
@@ -78,7 +85,7 @@ spond_create_event(
 | RSVP deadline | `rsvpDate` | Auto-set 24h before start |
 | Reminder | `autoReminderType` | Auto-set to 48h before |
 
-Home/Away is auto-detected: if `location.feature` contains your club's name → HOME, otherwise AWAY.
+Home/away: a `[HOME]` or `[AWAY]` tag in the heading wins and is stripped from the stored title. Otherwise the venue is home when it contains a substring from `SPOND_HOME_FEATURES`. With that unset, matches are away. Generated RSVP, meetup, and reminder timestamps are UTC and end with `Z`. `start` and `end` are sent through unchanged. Availability events omit meetup, RSVP, and reminder.
 
 ### Location & map pins
 
@@ -112,8 +119,8 @@ Use `spond_update_event` for `description` and `heading` only.
 **Do not** use it for `location`, `matchInfo`, or `matchEvent` — the spond library's
 `update_event` merges from a template that omits these fields, so they get overwritten.
 
-To patch location/matchInfo on an existing event: GET the full event JSON, update the
-relevant fields, then POST the full payload back to `{api_url}sponds/{event_id}`.
+Use `spond_patch_event` for those fields. It fetches the event, overlays your JSON
+(nested objects merge one level), and posts the full payload back.
 
 ## Timing
 
@@ -127,9 +134,9 @@ All API timestamps are **UTC/Zulu**. UK summer time (BST) is UTC+1.
 
 Always show local times in the `description` field — that's what users read.
 
-## Windsurf Skill
+## Skill
 
-A Windsurf/Cascade skill is included in [`skill/SKILL.md`](skill/SKILL.md). It auto-triggers when you ask Cascade anything Spond-related and provides:
+A client skill is included in [`skill/SKILL.md`](skill/SKILL.md). It auto-triggers when you ask Cascade anything Spond-related and provides:
 
 - Tool quick reference
 - Common workflow patterns

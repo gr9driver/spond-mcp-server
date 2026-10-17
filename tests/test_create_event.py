@@ -1,178 +1,201 @@
-"""TDD tests for spond_create_event."""
+"""Tests for spond_create_event and the direct-POST helper."""
 
 import json
-import pytest
-from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import aiohttp
+import pytest
 
 from spond_mcp_server.server import _create_event_via_api, spond_create_event
 
 
+def _session_returning(payload=None, error=None):
+    resp = MagicMock()
+    resp.__aenter__ = AsyncMock(return_value=resp)
+    resp.__aexit__ = AsyncMock(return_value=None)
+    if error is None:
+        resp.raise_for_status = MagicMock()
+        resp.text = AsyncMock(return_value=json.dumps(payload or {}))
+    else:
+        resp.raise_for_status = MagicMock(side_effect=error)
+        resp.text = AsyncMock(return_value="")
+    session = MagicMock()
+    session.post = MagicMock(return_value=resp)
+    return session, resp
+
+
 class TestCreateEventViaApi:
-    """Tests for the _create_event_via_api helper function."""
+    @pytest.mark.asyncio
+    async def test_create_event_basic(self, mock_spond_client, monkeypatch):
+        monkeypatch.delenv("SPOND_HOME_FEATURES", raising=False)
+        monkeypatch.delenv("SPOND_TEAM_NAME", raising=False)
+        session, _resp = _session_returning({"id": "new-event-123", "heading": "U11 V Barnack"})
+        mock_spond_client.clientsession = session
+
+        result = await _create_event_via_api(
+            spond_client=mock_spond_client,
+            group_id="test-group-123",
+            heading="U11 V Barnack",
+            start="2026-05-10T10:00:00",
+            end="2026-05-10T12:00:00",
+        )
+
+        assert result["id"] == "new-event-123"
+        assert session.post.call_args[0][0] == "https://api.spond.com/core/v1/sponds"
+        payload = session.post.call_args.kwargs["json"]
+        assert payload["heading"] == "U11 V Barnack"
+        assert payload["type"] == "EVENT"
+        assert "spondType" not in payload
+        assert payload["startTimestamp"] == "2026-05-10T10:00:00"
+        assert payload["endTimestamp"] == "2026-05-10T12:00:00"
+        assert payload["matchEvent"] is True
+        assert payload["matchInfo"]["type"] == "AWAY"
+        assert payload["matchInfo"]["opponentName"] == "Barnack"
+        assert payload["matchInfo"]["teamName"] == "U11"
+        assert payload["maxAccepted"] == 11
+        assert payload["meetupPrior"] == 30
+        assert payload["rsvpDate"].endswith("Z")
+        assert payload["meetupTimestamp"].endswith("Z")
+        assert payload["autoReminderTime"].endswith("Z")
+        assert payload["autoReminderType"] == "REMIND_48H_BEFORE"
 
     @pytest.mark.asyncio
-    async def test_create_event_basic(self, mock_spond_client):
-        """Test creating an event includes matchInfo and matchEvent fields."""
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"id": "new-event-123", "heading": "Test Event"}
-        mock_response.raise_for_status = MagicMock()
+    async def test_string_location_is_away_without_home_features(
+        self, mock_spond_client, monkeypatch
+    ):
+        monkeypatch.delenv("SPOND_HOME_FEATURES", raising=False)
+        session, _resp = _session_returning({"id": "new-event-456"})
+        mock_spond_client.clientsession = session
 
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client = MagicMock()
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=None)
-            mock_client.post = AsyncMock(return_value=mock_response)
-            mock_client_class.return_value = mock_client
+        await _create_event_via_api(
+            spond_client=mock_spond_client,
+            group_id="test-group-123",
+            heading="U11 V Lincoln",
+            start="2026-05-10T10:00:00",
+            end="2026-05-10T12:00:00",
+            description="Home match at My Cricket Club",
+            location="My Cricket Club, 1 Cricket Lane, MyTown",
+        )
 
-            # Act
-            result = await _create_event_via_api(
-                spond_client=mock_spond_client,
-                group_id="test-group-123",
-                heading="U11 V Barnack",
-                start="2026-05-10T10:00:00",
-                end="2026-05-10T12:00:00",
-            )
-
-            # Assert result
-            assert result["id"] == "new-event-123"
-
-            # Verify POST URL
-            call_args = mock_client.post.call_args
-            assert call_args[0][0] == "https://api.spond.com/core/v1/sponds"
-
-            # Verify core payload fields
-            payload = call_args[1]["json"]
-            assert payload["heading"] == "U11 V Barnack"
-            assert payload["startTimestamp"] == "2026-05-10T10:00:00"
-            assert payload["endTimestamp"] == "2026-05-10T12:00:00"
-            assert payload["spondType"] == "EVENT"
-
-            # Verify matchInfo shape (required for Home/Away type display)
-            assert payload["matchEvent"] is True
-            assert "matchInfo" in payload
-            assert payload["matchInfo"]["type"] in ("HOME", "AWAY")
-            assert payload["matchInfo"]["opponentName"] == "Barnack"
-
-            # Verify timing fields
-            assert payload["maxAccepted"] == 11
-            assert payload["meetupPrior"] == 30
-            assert "rsvpDate" in payload
-            assert payload["autoReminderType"] == "REMIND_48H_BEFORE"
+        payload = session.post.call_args.kwargs["json"]
+        assert payload["description"] == "Home match at My Cricket Club"
+        assert payload["location"]["address"] == "My Cricket Club, 1 Cricket Lane, MyTown"
+        assert payload["location"]["feature"] == "My Cricket Club"
+        assert payload["matchInfo"]["type"] == "AWAY"
 
     @pytest.mark.asyncio
-    async def test_create_event_with_home_location(self, mock_spond_client):
-        """Test home match: matchInfo.type=HOME, location.feature set."""
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"id": "new-event-456", "heading": "Match with Details"}
-        mock_response.raise_for_status = MagicMock()
+    async def test_home_features_env_marks_home(self, mock_spond_client, monkeypatch):
+        monkeypatch.setenv("SPOND_HOME_FEATURES", "My Cricket Club, 1 Cricket Lane")
+        monkeypatch.setenv("SPOND_TEAM_NAME", "HomeClub")
+        session, _resp = _session_returning({"id": "home-1"})
+        mock_spond_client.clientsession = session
 
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client = MagicMock()
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=None)
-            mock_client.post = AsyncMock(return_value=mock_response)
-            mock_client_class.return_value = mock_client
+        await _create_event_via_api(
+            spond_client=mock_spond_client,
+            group_id="test-group-123",
+            heading="U11 V Lincoln",
+            start="2026-05-10T10:00:00Z",
+            end="2026-05-10T12:00:00Z",
+            location_dict={"feature": "My Cricket Club", "address": "1 Cricket Lane"},
+        )
 
-            # Act
-            result = await _create_event_via_api(
-                spond_client=mock_spond_client,
-                group_id="test-group-123",
-                heading="U11 V Lincoln",
-                start="2026-05-10T10:00:00",
-                end="2026-05-10T12:00:00",
-                description="Home match at My Cricket Club",
-                location="My Cricket Club, 1 Cricket Lane, MyTown",
-            )
-
-            payload = mock_client.post.call_args[1]["json"]
-            assert payload["description"] == "Home match at My Cricket Club"
-            assert payload["location"]["address"] == "My Cricket Club, 1 Cricket Lane, MyTown"
-            assert payload["location"]["feature"] == "My Cricket Club"
-            assert payload["matchInfo"]["type"] == "HOME"
+        payload = session.post.call_args.kwargs["json"]
+        assert payload["matchInfo"]["type"] == "HOME"
+        assert payload["matchInfo"]["teamName"] == "HomeClub U11"
 
     @pytest.mark.asyncio
-    async def test_create_event_away_location(self, mock_spond_client):
-        """Test away match: matchInfo.type=AWAY, location.feature from first address part."""
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"id": "new-event-789"}
-        mock_response.raise_for_status = MagicMock()
+    async def test_home_tag_wins_over_venue(self, mock_spond_client, monkeypatch):
+        monkeypatch.delenv("SPOND_HOME_FEATURES", raising=False)
+        session, _resp = _session_returning({"id": "tagged"})
+        mock_spond_client.clientsession = session
 
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client = MagicMock()
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=None)
-            mock_client.post = AsyncMock(return_value=mock_response)
-            mock_client_class.return_value = mock_client
+        await _create_event_via_api(
+            spond_client=mock_spond_client,
+            group_id="test-group-123",
+            heading="U11 V Stamford [HOME]",
+            start="2026-05-17T10:00:00",
+            end="2026-05-17T12:00:00",
+            location="Stamford Cricket Club, Main Street, Stamford",
+        )
 
-            await _create_event_via_api(
-                spond_client=mock_spond_client,
-                group_id="test-group-123",
-                heading="U11 V Stamford [AWAY]",
-                start="2026-05-17T10:00:00",
-                end="2026-05-17T12:00:00",
-                location="Stamford Cricket Club, Main Street, Stamford",
-            )
+        payload = session.post.call_args.kwargs["json"]
+        assert payload["heading"] == "U11 V Stamford"
+        assert payload["matchInfo"]["type"] == "HOME"
+        assert payload["matchInfo"]["opponentName"] == "Stamford"
 
-            payload = mock_client.post.call_args[1]["json"]
-            assert payload["heading"] == "U11 V Stamford"
-            assert payload["matchInfo"]["type"] == "AWAY"
-            assert payload["matchInfo"]["opponentName"] == "Stamford"
-            assert payload["location"]["feature"] == "Stamford Cricket Club"
+    @pytest.mark.asyncio
+    async def test_away_location(self, mock_spond_client, monkeypatch):
+        monkeypatch.delenv("SPOND_HOME_FEATURES", raising=False)
+        session, _resp = _session_returning({"id": "new-event-789"})
+        mock_spond_client.clientsession = session
+
+        await _create_event_via_api(
+            spond_client=mock_spond_client,
+            group_id="test-group-123",
+            heading="U11 V Stamford [AWAY]",
+            start="2026-05-17T10:00:00",
+            end="2026-05-17T12:00:00",
+            location="Stamford Cricket Club, Main Street, Stamford",
+        )
+
+        payload = session.post.call_args.kwargs["json"]
+        assert payload["heading"] == "U11 V Stamford"
+        assert payload["matchInfo"]["type"] == "AWAY"
+        assert payload["matchInfo"]["opponentName"] == "Stamford"
+        assert payload["location"]["feature"] == "Stamford Cricket Club"
+
+    @pytest.mark.asyncio
+    async def test_availability_omits_meetup(self, mock_spond_client):
+        session, _resp = _session_returning({"id": "avail"})
+        mock_spond_client.clientsession = session
+
+        await _create_event_via_api(
+            spond_client=mock_spond_client,
+            group_id="test-group-123",
+            heading="U11 V Barnack",
+            start="2026-05-10T10:00:00Z",
+            end="2026-05-10T12:00:00Z",
+            event_type="AVAILABILITY",
+            max_accepted=8,
+        )
+
+        payload = session.post.call_args.kwargs["json"]
+        assert payload["type"] == "AVAILABILITY"
+        assert payload["maxAccepted"] == 8
+        assert "meetupTimestamp" not in payload
+        assert "rsvpDate" not in payload
+        assert "autoReminderTime" not in payload
 
     @pytest.mark.asyncio
     async def test_create_event_api_error(self, mock_spond_client):
-        """Test that API errors propagate correctly (RED → GREEN)."""
-        from httpx import HTTPStatusError, Request, Response
+        error = aiohttp.ClientResponseError(
+            request_info=MagicMock(),
+            history=(),
+            status=400,
+            message="Bad Request",
+        )
+        session, _resp = _session_returning(error=error)
+        mock_spond_client.clientsession = session
 
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client = MagicMock()
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=None)
-
-            # Simulate 400 error
-            mock_request = MagicMock(spec=Request)
-            mock_response = MagicMock(spec=Response)
-            mock_response.status_code = 400
-            mock_response.text = "Bad Request"
-
-            error = HTTPStatusError(
-                "Bad Request",
-                request=mock_request,
-                response=mock_response,
+        with pytest.raises(aiohttp.ClientResponseError):
+            await _create_event_via_api(
+                spond_client=mock_spond_client,
+                group_id="test-group-123",
+                heading="Test Event",
+                start="2026-05-10T10:00:00",
+                end="2026-05-10T12:00:00",
             )
-            mock_client.post = AsyncMock(side_effect=error)
-            mock_client_class.return_value = mock_client
-
-            # Assert error propagates
-            with pytest.raises(HTTPStatusError):
-                await _create_event_via_api(
-                    spond_client=mock_spond_client,
-                    group_id="test-group-123",
-                    heading="Test Event",
-                    start="2026-05-10T10:00:00",
-                    end="2026-05-10T12:00:00",
-                )
 
 
 class TestSpondCreateEventTool:
-    """Tests for the spond_create_event MCP tool."""
-
     @pytest.mark.asyncio
     async def test_tool_calls_create_event_via_api(self):
-        """Test that spond_create_event tool uses _create_event_via_api (RED → GREEN)."""
         with patch("spond_mcp_server.server._get_client") as mock_get_client, \
              patch("spond_mcp_server.server._create_event_via_api") as mock_create:
-
-            # Arrange mocks
             mock_client = MagicMock()
-            mock_client.auth_headers = {"Authorization": "Bearer token"}
-            mock_client.api_url = "https://api.spond.com/core/v1/"
             mock_get_client.return_value = mock_client
-
             mock_create.return_value = {"id": "new-123", "heading": "Created Event"}
 
-            # Act
             result = await spond_create_event(
                 group_id="group-123",
                 heading="Test Match",
@@ -180,7 +203,6 @@ class TestSpondCreateEventTool:
                 end="2026-05-10T12:00:00",
             )
 
-            # Assert
             mock_create.assert_called_once_with(
                 spond_client=mock_client,
                 group_id="group-123",
@@ -189,27 +211,22 @@ class TestSpondCreateEventTool:
                 end="2026-05-10T12:00:00",
                 description="",
                 location="",
+                location_dict=None,
+                event_type="EVENT",
+                max_accepted=11,
             )
-
-            # Verify result is serialized JSON
             parsed = json.loads(result)
             assert parsed["id"] == "new-123"
             assert parsed["heading"] == "Created Event"
 
     @pytest.mark.asyncio
     async def test_tool_passes_optional_params(self):
-        """Test that optional description and location are passed through (RED → GREEN)."""
         with patch("spond_mcp_server.server._get_client") as mock_get_client, \
              patch("spond_mcp_server.server._create_event_via_api") as mock_create:
-
             mock_client = MagicMock()
-            mock_client.auth_headers = {"Authorization": "Bearer token"}
-            mock_client.api_url = "https://api.spond.com/core/v1/"
             mock_get_client.return_value = mock_client
-
             mock_create.return_value = {"id": "new-456"}
 
-            # Act
             await spond_create_event(
                 group_id="group-123",
                 heading="Test Match",
@@ -217,9 +234,10 @@ class TestSpondCreateEventTool:
                 end="2026-05-10T12:00:00",
                 description="Important match",
                 location="My CC",
+                event_type="AVAILABILITY",
+                max_accepted=8,
             )
 
-            # Assert optional params passed
             mock_create.assert_called_once_with(
                 spond_client=mock_client,
                 group_id="group-123",
@@ -228,4 +246,7 @@ class TestSpondCreateEventTool:
                 end="2026-05-10T12:00:00",
                 description="Important match",
                 location="My CC",
+                location_dict=None,
+                event_type="AVAILABILITY",
+                max_accepted=8,
             )

@@ -34,12 +34,15 @@ Find your group and subgroup IDs with `spond_get_groups` / `spond_get_group`.
 
 | Task | Tool |
 |------|------|
-| List upcoming events | `spond_get_events` |
+| List upcoming events | `spond_get_events` (`include_hidden`, `summary=true`) |
 | Get event details | `spond_get_event` |
-| Update an event | `spond_update_event` |
+| Update description or heading | `spond_update_event` |
+| Patch location or match fields | `spond_patch_event` |
+| Delete an event | `spond_delete_event` |
 | Accept/decline event | `spond_change_response` |
+| RSVP names | `spond_get_rsvp_summary` |
 | Export attendance XLSX | `spond_get_event_attendance` |
-| List all groups | `spond_get_groups` |
+| List all groups | `spond_get_groups` (`summary=true` for id, name, member count) |
 | Get group details | `spond_get_group` |
 | Find a member | `spond_get_person` |
 | List chat messages | `spond_get_messages` |
@@ -52,16 +55,16 @@ Find your group and subgroup IDs with `spond_get_groups` / `spond_get_group`.
 ## Tool Details
 
 ### spond_get_events
-Filters: `group_id`, `subgroup_id`, `include_scheduled`, `min_start`, `max_start`, `min_end`, `max_end`, `max_events`.
+Filters: `group_id`, `subgroup_id`, `include_scheduled`, `include_hidden`, `summary`, `min_start`, `max_start`, `min_end`, `max_end`, `max_events`.
 Date params accept ISO-8601 format (e.g. `2025-04-01`).
 
 ### spond_update_event
 Pass `updates` as a JSON string: `'{"description": "New description", "heading": "New Title"}'`
 
-⚠️ Do NOT update `location`, `matchInfo`, or `matchEvent` via this tool — the spond library template overwrites these fields. See `references/api-patterns.md` for the full-payload patch pattern.
+Do not update `location`, `matchInfo`, or `matchEvent` via this tool — the spond library template overwrites these fields. Use `spond_patch_event` for those fields.
 
 ### spond_create_event
-Creates a new event via direct Spond API POST. Auto-detects Home/Away from location feature, parses opponent from heading, sets meetup 30 min before, RSVP 24h before.
+Creates a new event via direct Spond API POST. The payload field is `type`, not `spondType`. Home/away comes from a `[HOME]` or `[AWAY]` tag, otherwise from `SPOND_HOME_FEATURES`. Opponent is parsed from `" v "` in the heading. Meetup is 30 minutes before start and RSVP is 24 hours before, both as UTC timestamps ending in `Z`. Availability events omit those timing fields.
 
 **Required:** `group_id`, `heading`, `start` (UTC), `end` (UTC)
 
