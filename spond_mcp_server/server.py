@@ -399,10 +399,27 @@ def _overlay(base: dict, updates: dict) -> dict:
     return merged
 
 
+async def _fetch_event(spond_client: Spond, uid: str) -> dict:
+    """GET one event by id.
+
+    PyPI spond 1.2.1 looks the id up in the cached event list. Olen main
+    fetches by id, but that build is not released. ponytail: delete this
+    once spond.get_event calls _fetch_event_by_uid, and call that instead.
+    """
+    if not uid:
+        raise KeyError("No event with id=''.")
+    await spond_client.login()
+    return await _api_json(
+        spond_client.clientsession,
+        "get",
+        f"{spond_client.api_url}sponds/{uid}?includeComments=true",
+        spond_client.auth_headers,
+    )
+
+
 async def _patch_event(spond_client: Spond, uid: str, updates: dict) -> dict:
     """GET the event, overlay updates, POST the full payload back."""
-    await spond_client.login()
-    event = await spond_client.get_event(uid)
+    event = await _fetch_event(spond_client, uid)
     payload = _overlay(event, updates)
     return await _api_json(
         spond_client.clientsession,
@@ -477,7 +494,7 @@ async def spond_get_event(uid: str) -> str:
         uid: The event's unique identifier.
     """
     s = await _get_client()
-    event = await s.get_event(uid)
+    event = await _fetch_event(s, uid)
     return _serialize(event)
 
 
@@ -647,7 +664,7 @@ async def spond_get_rsvp_summary(uid: str) -> str:
         uid: The event's unique identifier.
     """
     s = await _get_client()
-    event = await s.get_event(uid)
+    event = await _fetch_event(s, uid)
     return _serialize(rsvp_summary(event))
 
 

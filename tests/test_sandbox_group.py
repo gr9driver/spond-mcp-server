@@ -91,5 +91,7 @@ async def test_sandbox_event_can_be_created_patched_listed_and_deleted():
             assert deleted.get("success") is True
         await close_clients()
 
-    gone = json.loads(await spond_get_event(created_id))
-    assert "error" in gone or gone.get("id") != created_id
+        gone = json.loads(await spond_get_event(created_id))
+        assert "error" in gone or gone.get("deleted") is True or gone.get("id") != created_id
+        missing = json.loads(await spond_get_event("0" * 32))
+        assert "error" in missing

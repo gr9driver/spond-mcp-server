@@ -119,10 +119,15 @@ async def test_patch_keeps_match_info():
     resp.raise_for_status = MagicMock()
     resp.text = AsyncMock(return_value=json.dumps({"id": "e1", "ok": True}))
     session.post = MagicMock(return_value=resp)
+    got = MagicMock()
+    got.__aenter__ = AsyncMock(return_value=got)
+    got.__aexit__ = AsyncMock(return_value=None)
+    got.raise_for_status = MagicMock()
+    got.text = AsyncMock(return_value=json.dumps(event))
+    session.get = MagicMock(return_value=got)
 
     client = MagicMock()
     client.login = AsyncMock()
-    client.get_event = AsyncMock(return_value=event)
     client.clientsession = session
     client.api_url = "https://api.spond.com/core/v1/"
     client.auth_headers = {"Authorization": "Bearer test"}
@@ -138,6 +143,57 @@ async def test_patch_keeps_match_info():
     assert posted["location"]["latitude"] == 52.1
     assert posted["matchInfo"]["opponentName"] == "Rival"
     assert session.post.call_args[0][0] == "https://api.spond.com/core/v1/sponds/e1"
+    assert session.get.call_args[0][0].endswith("/sponds/e1?includeComments=true")
+
+
+@pytest.mark.asyncio
+async def test_get_event_fetches_by_id():
+    session = MagicMock()
+    resp = MagicMock()
+    resp.__aenter__ = AsyncMock(return_value=resp)
+    resp.__aexit__ = AsyncMock(return_value=None)
+    resp.raise_for_status = MagicMock()
+    resp.text = AsyncMock(return_value=json.dumps({"id": "e9", "heading": "Probe"}))
+    session.get = MagicMock(return_value=resp)
+
+    client = MagicMock()
+    client.login = AsyncMock()
+    client.get_event = AsyncMock(side_effect=AssertionError("cache lookup"))
+    client.clientsession = session
+    client.api_url = "https://api.spond.com/core/v1/"
+    client.auth_headers = {"Authorization": "Bearer test"}
+
+    with patch("spond_mcp_server.server._get_client", return_value=client):
+        body = json.loads(await server.spond_get_event("e9"))
+
+    assert body["heading"] == "Probe"
+    assert session.get.call_args[0][0].endswith("/sponds/e9?includeComments=true")
+    client.get_event.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_event_missing_id_is_json_error():
+    session = MagicMock()
+    resp = MagicMock()
+    resp.__aenter__ = AsyncMock(return_value=resp)
+    resp.__aexit__ = AsyncMock(return_value=None)
+    resp.status = 404
+    resp.raise_for_status = MagicMock(
+        side_effect=aiohttp.ClientResponseError(MagicMock(), (), status=404, message="not found")
+    )
+    session.get = MagicMock(return_value=resp)
+
+    client = MagicMock()
+    client.login = AsyncMock()
+    client.clientsession = session
+    client.api_url = "https://api.spond.com/core/v1/"
+    client.auth_headers = {}
+
+    with patch("spond_mcp_server.server._get_client", return_value=client):
+        body = json.loads(await server.spond_get_event("missing"))
+
+    assert body["status"] == 404
+    assert "error" in body
 
 
 def test_summary_shapes():
